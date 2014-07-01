@@ -19,6 +19,7 @@
 (require web-server/http/response)
 (require web-server/http/response-structs)
 (require web-server/dispatchers/dispatch)
+(require (prefix-in seq: web-server/dispatchers/dispatch-sequencer))
 (require net/url)
 (require "dispatcher.rkt")
 (require "service-mapper.rkt")
@@ -50,11 +51,16 @@
       (define kvs (map list keys vals))
       (define conn-headers-cell (assq '#:conn-headers kvs))
       (define conn-headers (and conn-headers-cell (cadr conn-headers-cell)))
-      (define dispatcher (make-general-websockets-dispatcher conn-dispatch conn-headers))
-      (match-define (list keys1 vals1) (transpose (remq conn-headers-cell kvs)))
+      (define aux-dispatcher-cell (assq '#:aux-dispatcher kvs))
+      (define aux-dispatcher (and aux-dispatcher-cell (cadr aux-dispatcher-cell)))
+      (define dispatcher (guard-dispatcher (make-general-websockets-dispatcher conn-dispatch conn-headers)))
+      (match-define (list keys1 vals1) (transpose (remq conn-headers-cell (remq aux-dispatcher-cell kvs))))
       (keyword-apply serve
 		     (cons '#:dispatch keys1)
-		     (cons (guard-dispatcher dispatcher) vals1)
+		     (cons (if aux-dispatcher
+                               (seq:make aux-dispatcher dispatcher)
+                               dispatcher)
+                           vals1)
 		     rest)))
    'ws-serve))
 
@@ -62,8 +68,16 @@
   (procedure-rename
    (make-keyword-procedure
     (lambda (keys vals service-mapper . rest)
+      (define kvs (map list keys vals))
+      (define aux-dispatcher-cell (assq '#:aux-dispatcher kvs))
+      (define aux-dispatcher (and aux-dispatcher-cell (cadr aux-dispatcher-cell)))
+      (define dispatcher (guard-dispatcher (make-service-mapper-dispatcher service-mapper)))
+      (match-define (list keys1 vals1) (transpose (remq aux-dispatcher-cell kvs)))
       (keyword-apply serve
-		     (cons '#:dispatch keys)
-		     (cons (guard-dispatcher (make-service-mapper-dispatcher service-mapper)) vals)
+		     (cons '#:dispatch keys1)
+		     (cons (if aux-dispatcher
+                               (seq:make aux-dispatcher dispatcher)
+                               dispatcher)
+                           vals1)
 		     rest)))
    'ws-serve*))
